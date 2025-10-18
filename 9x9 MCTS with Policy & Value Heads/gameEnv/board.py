@@ -71,7 +71,7 @@ def place_stone_mechanical(board: np.ndarray, move: int, color: int) -> Tuple[np
     assert board[x, y] == EMPTY, "Square must be empty for mechanical placement"
     next_board = board.copy()
     next_board[x, y] = color
-
+    
     captured = False
     # Capture adjacent opponent chains that lost last liberty
     for neighbor_x, neighbor_y in neighbors(x, y, n):
@@ -80,7 +80,7 @@ def place_stone_mechanical(board: np.ndarray, move: int, color: int) -> Tuple[np
             if not libs:
                 remove_group(next_board, stones)
                 captured = True
-
+    
     return next_board, captured
 
 def own_chain_liberties_after(nextb: np.ndarray, move: int) -> int:

@@ -17,31 +17,31 @@ class MCTSNode:
     move: Optional[int] = None
     visit_count: int = 0
     value_sum: float = 0.0
-
+    
     def __post_init__(self) -> None:
         self.children: Dict[int, MCTSNode] = {}
         self._untried_moves: Optional[List[int]] = None
-
+    
     def is_terminal(self, rules: Rules) -> bool:
         return self.state.is_terminal(rules)
-
+    
     def untried_moves(self, rules: Rules) -> List[int]:
         if self._untried_moves is None:
             moves = self.state.legal_moves(rules)
             random.shuffle(moves)
             self._untried_moves = moves
         return self._untried_moves
-
+    
     def has_untried_moves(self, rules: Rules) -> bool:
         return len(self.untried_moves(rules)) > 0
-
+    
     def expand(self, rules: Rules) -> "MCTSNode":
         move = self.untried_moves(rules).pop()
         next_state = self.state.apply(rules, move)
         child = MCTSNode(state=next_state, parent=self, move=move)
         self.children[move] = child
         return child
-
+    
     def best_child(self, c_param: float) -> "MCTSNode":
         assert self.children, "Cannot select child from an unexpanded leaf."
         log_total = math.log(self.visit_count + 1)
@@ -66,25 +66,25 @@ class MCTS:
         self.sims = sims
         self.c_uct = c_uct
         self.rollout_limit = rollout_limit
-
+    
     def best_move(self, state: GameState, rules: Rules) -> int:
         """Return the move index with highest visit count after MCTS search."""
         if state.is_terminal(rules):
             return pass_move(state.board)
-
+        
         root = MCTSNode(state=state)
         for _ in range(self.sims):
             node, path = self._tree_policy(root, rules)
             result = self._rollout(node.state, rules)
             self._backpropagate(path, result)
-
+        
         if not root.children:
             return pass_move(state.board)
-
+        
         best = max(root.children.values(), key=lambda child: child.visit_count)
         assert best.move is not None
         return best.move
-
+    
     def _tree_policy(self, root: MCTSNode, rules: Rules) -> tuple[MCTSNode, List[MCTSNode]]:
         node = root
         path = [node]
@@ -105,7 +105,7 @@ class MCTS:
         current = state
         steps = 0
         origin_player = state.to_play
-
+        
         while not current.is_terminal(rules) and steps < self.rollout_limit:
             legal_moves = current.legal_moves(rules)
             if not legal_moves:
@@ -116,18 +116,18 @@ class MCTS:
                 move = random.choice(non_pass_moves) if non_pass_moves else pass_idx
             current = current.apply(rules, move)
             steps += 1
-
+        
         if not current.is_terminal(rules):
             pass_idx = pass_move(current.board)
             current = current.apply(rules, pass_idx)
             current = current.apply(rules, pass_idx)
-
+        
         score = rules.final_score(current)
         if abs(score) < 1e-6:
             return 0.0
         winner = BLACK if score > 0 else WHITE
         return 1.0 if winner == origin_player else -1.0
-
+    
     @staticmethod
     def _backpropagate(path: List[MCTSNode], leaf_value: float) -> None:
         value = leaf_value
