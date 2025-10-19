@@ -65,7 +65,7 @@ class MCTS:
     def __init__(self, sims: int = 800, c_uct: float = 1.4, rollout_limit: int = 256) -> None:
         self.sims = sims
         self.c_uct = c_uct
-        self.rollout_limit = rollout_limit
+        
     
     def best_move(self, state: GameState, rules: Rules) -> int:
         """Return the move index with highest visit count after MCTS search."""
@@ -103,10 +103,10 @@ class MCTS:
     # Perform a random rollout from the given state to a terminal state
     def _rollout(self, state: GameState, rules: Rules) -> float:
         current = state
-        steps = 0
+        
         origin_player = state.to_play
         
-        while not current.is_terminal(rules) and steps < self.rollout_limit:
+        while not current.is_terminal(rules):
             legal_moves = current.legal_moves(rules)
             if not legal_moves:
                 move = pass_move(current.board)
@@ -115,12 +115,9 @@ class MCTS:
                 non_pass_moves = [m for m in legal_moves if m != pass_idx]
                 move = random.choice(non_pass_moves) if non_pass_moves else pass_idx
             current = current.apply(rules, move)
-            steps += 1
+
         
-        if not current.is_terminal(rules):
-            pass_idx = pass_move(current.board)
-            current = current.apply(rules, pass_idx)
-            current = current.apply(rules, pass_idx)
+
         
         score = rules.final_score(current)
         if abs(score) < 1e-6:
