@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 import random
 from dataclasses import dataclass
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Literal
 
 from gameEnv.board import BLACK, WHITE, pass_move
 from gameEnv.gameState import GameState
@@ -26,6 +26,9 @@ class MCTSNode:
         return self.state.is_terminal(rules)
     
     def untried_moves(self, rules: Rules) -> List[int]:
+        """
+        Return list of untried moves from this node (shuffled for exploration randomness). 
+        """
         if self._untried_moves is None:
             moves = self.state.legal_moves(rules)
             random.shuffle(moves)
@@ -36,6 +39,14 @@ class MCTSNode:
         return len(self.untried_moves(rules)) > 0
     
     def expand(self, rules: Rules) -> "MCTSNode":
+        """
+        Expand by creating a new child for one of the untried moves:
+            1. Pop a move from untried moves
+            2. Apply the move to get the next state
+            3. Create a new MCTSNode for the child
+            4. Add the child to this node's children
+            5. Return the new child node
+        """
         move = self.untried_moves(rules).pop()
         next_state = self.state.apply(rules, move)
         child = MCTSNode(state=next_state, parent=self, move=move)
@@ -62,13 +73,22 @@ class MCTSNode:
 
 
 class MCTS:
-    def __init__(self, sims: int = 800, c_uct: float = 1.4, rollout_limit: int = 256) -> None:
+    def __init__(self, sims: int = 800, c_uct: float = 1.4, rollout: Optional[int] = None, best_con: Literal["max_q", "max_visit"] = "max_visit") -> None:
+        """
+        sims: simulations per move
+        c_uct: exploration constant for UCT formula (addjustable to tweak exploration vs exploitation)
+        rollout: max steps in random rollout; None = full rollout (default)
+        best_con: strategy to select best move after simulations
+            - "max_q": select move with highest value in the search tree
+            - "max_visit": select move with highest visit count (default)
+        """
         self.sims = sims
         self.c_uct = c_uct
-        self.rollout_limit = rollout_limit
+        self.rollout = rollout
+        self.best_con = best_con
     
     def best_move(self, state: GameState, rules: Rules) -> int:
-        """Return the move index with highest visit count after MCTS search."""
+        """Return the move index with highest value/visit count after MCTS search."""
         if state.is_terminal(rules):
             return pass_move(state.board)
         
@@ -81,7 +101,10 @@ class MCTS:
         if not root.children:
             return pass_move(state.board)
         
-        best = max(root.children.values(), key=lambda child: child.visit_count)
+        if self.best_con == "max_q":
+            best = max(root.children.values(), key=lambda child: child.value_sum / child.visit_count if child.visit_count > 0 else -float("inf"))
+        else:
+            best = max(root.children.values(), key=lambda child: child.visit_count)
         assert best.move is not None
         return best.move
     
@@ -100,13 +123,12 @@ class MCTS:
             node = node.best_child(self.c_uct)
             path.append(node)
     
-    # Perform a random rollout from the given state to a terminal state
     def _rollout(self, state: GameState, rules: Rules) -> float:
         current = state
         steps = 0
         origin_player = state.to_play
         
-        while not current.is_terminal(rules) and steps < self.rollout_limit:
+        while not current.is_terminal(rules) and (self.rollout is None or steps < self.rollout):
             legal_moves = current.legal_moves(rules)
             if not legal_moves:
                 move = pass_move(current.board)

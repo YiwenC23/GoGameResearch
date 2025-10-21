@@ -2,6 +2,7 @@ import time
 import queue
 import threading
 import tkinter as tk
+import multiprocessing
 
 from tkinter import ttk
 
@@ -132,7 +133,7 @@ class GoGUI(tk.Tk):
         self.setup_layout()
         
         # MCTS engine
-        self.mcts = MCTS(sims=128)
+        self.mcts = MCTS(sims=800)
         
         # Initial draw and start GTP polling
         self.draw_all()
