@@ -110,11 +110,14 @@ class GoGUI(tk.Tk):
         super().__init__()
         self.title("9x9 Go")
         self.geometry("900x650")   # Initial window size
+        self.mode = tk.StringVar(value="human_vs_gtp")  # default mode
         
         # model
         self.rules = rules
         self.state = GameState.new(size=N)
         self.gtp_color = gtp_color
+        self.gtp_players = {gtp_color} if gtp_color is not None else set()
+        self.game_id = 0
         
         # threading mailbox (worker -> GUI)
         self.result_q = queue.Queue()
@@ -133,11 +136,12 @@ class GoGUI(tk.Tk):
         self.setup_layout()
         
         # MCTS engine
-        self.mcts = MCTS(sims=800)
+        self.mcts = MCTS(sims=245, rollout=124)
         
         # Initial draw and start GTP polling
         self.draw_all()
         self.after(50, self.poll_gtp_queue)
+        self.add_message("Mode: Human (Black) vs GTP (White)")
         self.add_message("Game started. Black to play")
         self.maybe_gtp_turn()
     
@@ -165,11 +169,20 @@ class GoGUI(tk.Tk):
         self.control_frame.pack(side=tk.RIGHT, fill=tk.Y, padx=10, pady=10)
         self.control_frame.pack_propagate(False)   # Maintain fixed width
         
-        # Button section
+        # Game mode section
+        mode_frame = ttk.LabelFrame(self.control_frame, text="Game Mode", padding=10)
+        mode_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        self.btn_gtp_gtp = ttk.Button(mode_frame, text="GTP vs GTP", command=lambda: self.apply_mode(mode="gtp_vs_gtp"))
+        self.btn_gtp_gtp.pack(fill=tk.X, pady=5)
+        self.btn_human_gtp = ttk.Button(mode_frame, text="Human vs GTP", command=lambda: self.apply_mode(mode="human_vs_gtp"))
+        self.btn_human_gtp.pack(fill=tk.X, pady=5)
+        
+        # Game controls section
         button_frame = ttk.LabelFrame(self.control_frame, text="Game Controls", padding=10)
         button_frame.pack(fill=tk.X, pady=(0, 10))
         
-        self.btn_newGame = ttk.Button(button_frame, text="New Game", command=self.new_game)
+        self.btn_newGame = ttk.Button(button_frame, text="New Game", command=lambda: self.new_game(self.mode.get()))
         self.btn_newGame.pack(fill=tk.X, pady=5)
         
         self.btn_pass = ttk.Button(button_frame, text="Pass", command=self.on_pass)
@@ -360,36 +373,56 @@ class GoGUI(tk.Tk):
                     width=1
                 )
     
+    def apply_mode(self, mode):
+        if mode:
+            self.mode.set(mode)
+        
+        if self.mode.get() == "gtp_vs_gtp":
+            self.gtp_players = {BLACK, WHITE}
+            self.gtp_color = None
+            self.new_game(mode)
+        elif self.mode.get() == "human_vs_gtp":
+            self.gtp_players = {WHITE}  # human is Black
+            self.gtp_color = WHITE
+            self.new_game(mode)
+    
     #* Interaction Handlers
     def on_click(self, event):
+        if self.mode.get() == "gtp_vs_gtp":
+            return
+        
         if self.gtp_busy or self.state.is_terminal(self.rules):
             return
-            
+        
         loc = self.xy_to_loc(event.x, event.y)
         if loc is None:
             return
-            
+        
         x, y = loc
         index = loc_to_index(x, y, n=self.board_size)
         
         if index not in self.state.legal_moves(self.rules):
             self.add_message(f"Illegal move at {loc_to_gtp(x, y, n=self.board_size)}")
             return
-            
+        
         # Record the move
         player = "Black" if self.state.to_play == BLACK else "White"
-        self.add_message(f"{player} played {loc_to_gtp(x, y, n=self.board_size)}")
+        self.add_message(f"Human Player ({player}) played {loc_to_gtp(x, y, n=self.board_size)}")
         self.play_move(index)
     
     def on_pass(self):
+        if self.mode.get() == "gtp_vs_gtp":
+            return
+        
         if self.gtp_busy or self.state.is_terminal(self.rules):
             return
-            
+        
         player = "Black" if self.state.to_play == BLACK else "White"
         self.add_message(f"{player} passed")
         self.play_move(pass_move(self.state.board))
     
-    def new_game(self):
+    def new_game(self, mode):
+        self.game_id += 1
         self.state = GameState.new(size=N)
         self.draw_all()
         
@@ -397,7 +430,21 @@ class GoGUI(tk.Tk):
         self.message_text.delete(1.0, tk.END)
         self.message_text.config(state=tk.DISABLED)
         
-        self.add_message("New game started. Black to play")
+        self.btn_pass.state(["!disabled"])
+        self.gtp_busy = False
+        try:
+            while True:
+                self.result_q.get_nowait()
+        except queue.Empty:
+            pass
+        
+        mode = mode if mode else self.mode.get()
+        if mode == "gtp_vs_gtp":
+            self.add_message("Mode: GTP Self-play")
+            self.add_message("Game started. Black to play")
+        elif mode == "human_vs_gtp":
+            self.add_message("Mode: Human (Black) vs GTP (White)")
+            self.add_message("Game started. Black to play")
         self.maybe_gtp_turn()
     
     def xy_to_loc(self, x, y):
@@ -452,25 +499,28 @@ class GoGUI(tk.Tk):
     
     def maybe_gtp_turn(self):
         """Check if it's GTP's turn and launch GTP thinking if needed"""
-        if self.state.to_play == self.gtp_color and not self.state.is_terminal(self.rules):
+        if self.state.to_play in self.gtp_players and not self.state.is_terminal(self.rules):
             self.launch_gtp()
     
     def launch_gtp(self):
         """Launch GTP computation in a background thread"""
         if self.gtp_busy: 
             return
-            
+        
+        color_stone = "Black" if self.state.to_play == BLACK else "White"
         self.gtp_busy = True
-        self.add_message("GTP is thinking...")
+        self.add_message(f"GTP ({color_stone}) is thinking...")
+        
         self.btn_pass.state(["disabled"])
-        self.btn_newGame.state(["disabled"])
+        
+        current_game = self.game_id
         
         def worker():
             try:
                 mv = self.mcts.best_move(self.state, self.rules)
-                self.result_q.put(("gtp_move", mv))
+                self.result_q.put(("gtp_move", mv, current_game))
             except Exception as e:
-                self.result_q.put(("error", e))
+                self.result_q.put(("error", e, current_game))
         
         self.worker = threading.Thread(target=worker, daemon=True)
         self.worker.start()
@@ -479,7 +529,16 @@ class GoGUI(tk.Tk):
         """Poll the GTP result queue and update GUI when GTP move is ready"""
         try:
             while True:
-                tag, payload = self.result_q.get_nowait()
+                item = self.result_q.get_nowait()
+                
+                if len(item) == 3:
+                    tag, payload, game_id = item
+                else:
+                    tag, payload = item
+                    game_id = self.game_id
+                
+                if game_id != self.game_id:
+                    continue
                 
                 if tag == "gtp_move":
                     mv = payload
@@ -490,15 +549,13 @@ class GoGUI(tk.Tk):
                     
                     self.gtp_busy = False
                     self.btn_pass.state(["!disabled"])
-                    self.btn_newGame.state(["!disabled"])
                     self.play_move(mv)
-                    
+                
                 elif tag == "error":
                     self.gtp_busy = False
                     self.btn_pass.state(["!disabled"])
-                    self.btn_newGame.state(["!disabled"])
                     self.add_message(f"GTP error: {payload}")
-                    
+        
         except queue.Empty:
             pass
         
