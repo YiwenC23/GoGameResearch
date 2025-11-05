@@ -2,108 +2,24 @@ import time
 import queue
 import threading
 import tkinter as tk
-import multiprocessing
 
 from tkinter import ttk
 
 from gameEnv.rules import Rules
 from gameEnv.gameState import GameState
-from gameEnv.board import BLACK, WHITE, EMPTY, pass_move
+from gameEnv.board import (
+    BLACK, WHITE, EMPTY, COLS,
+    loc_to_index,
+    loc_to_gtp,
+    index_to_gtp,
+    pass_move
+)
 
 from algorithms.MCTS import MCTS
 
 
-#* ---------------- Board Settings ---------------- *#
 N = 9                                                # board size
-PASS_STR = "PASS"                                    # string to display for pass move
-COLS = "ABCDEFGHJ"                                   # board coordinates: Go coords skip I
-COL2IDX = {col:i for i,col in enumerate(COLS)}       # board coordinates to index mapping
 
-
-def loc_to_index(x: int, y: int, n: int = 9) -> int:
-    """
-    Convert a 2D board location to a 1D engine index in [0, n*n - 1].
-    Parameters:
-        x   (int): zero-based row (0 = top)
-        y   (int): zero-based column (0 = left)
-        n   (int): board size (e.g., 9 for 9x9)
-    Returns:
-        int: flat index for the intersection
-    """
-    board_size = n
-    return x * board_size + y
-
-def index_to_loc(m: int, n: int = 9) -> tuple[int, int]:
-    """
-    Convert a 1D engine index to (x, y).
-    Parameters:
-        m   (int): flat index of an intersection (0..n*n-1)
-        n   (int): board size (e.g., 9 for 9x9)
-    Returns:
-        (x, y): zero-based location
-    """
-    index = m
-    board_size = n
-    return divmod(index, board_size)
-
-def loc_to_gtp(x: int, y: int, n: int = 9) -> str:
-    """
-    Convert internal (x, y) with row=0 at TOP to GTP/human coordinate like 'D4'.
-    Notes:
-        - Letters run left -> right using COLS (A..J without I for 9x9).
-        - Numbers count from BOTTOM (A1 lower-left), so y is flipped.
-    """
-    board_size = n
-    letter = COLS[y]             # 0..8 -> A..J (no I)
-    number = board_size - x      # flip because GUI uses top=0, GTP uses bottom=1
-    return f"{letter}{number}"
-
-def gtp_to_loc(s: str, n: int = 9) -> tuple[int, int] | None:
-    """
-    'D4' -> loc(x, y) using our COLS string; 'PASS'/'pass' -> None.
-    Accepts case-insensitive letters.
-    """
-    board_size = n
-    gtp_str = s.strip()
-    if not gtp_str:
-        raise ValueError("empty coord")
-    if gtp_str.lower() == "pass":
-        return None
-    
-    letter = gtp_str[0].upper()
-    try:
-        number = int(gtp_str[1:])
-    except ValueError:
-        raise ValueError(f"bad row number: {gtp_str[1:]}")
-    
-    if letter not in COL2IDX:
-        raise ValueError(f"bad column: {letter}")
-    if not (1 <= number <= board_size):
-        raise ValueError(f"bad row: {number}")
-    
-    y = COL2IDX[letter]
-    x = board_size - number
-    return (x, y)
-
-def gtp_to_index(s: str, n: int = 9) -> int:
-    """
-    'D4' -> engine index; 'PASS' -> n*n.
-    """
-    board_size = n
-    loc = gtp_to_loc(s, board_size)
-    return board_size * board_size if loc is None else loc_to_index(*loc, n=board_size)
-
-def index_to_gtp(m: int, n: int = 9) -> str:
-    """
-    engine index or pass -> 'D4' / 'PASS'.
-    """
-    index = m
-    board_size = n
-    if index == board_size * board_size:
-        return PASS_STR
-    
-    x, y = index_to_loc(index, board_size)
-    return loc_to_gtp(x, y, board_size)
 
 class GoGUI(tk.Tk):
     def __init__(self, rules: Rules, gtp_color=WHITE):
@@ -136,7 +52,7 @@ class GoGUI(tk.Tk):
         self.setup_layout()
         
         # MCTS engine
-        self.mcts = MCTS(sims=245, rollout=124)
+        self.mcts = MCTS(sims=512)
         
         # Initial draw and start GTP polling
         self.draw_all()
