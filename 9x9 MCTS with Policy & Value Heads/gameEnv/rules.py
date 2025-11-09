@@ -12,7 +12,8 @@ from gameEnv.board import (
     place_stone_mechanical,
     own_chain_liberties_after,
     resolve_own_suicide,
-    empty_regions_with_borders
+    empty_regions_with_borders,
+    all_points_are_pass_alive_or_territory
 )
 
 
@@ -26,11 +27,12 @@ class Rules:
     - end_on_two_passes: True by default
     - komi: 6.0 by default (A number of points awarded to the White player to compensate for Black's advantage of playing first.)
     """
+    komi: float = 6.0
     ko: str = "simple"
     allow_suicide: bool = False
     scoring: str = "territory"
     end_on_two_passes: bool = True
-    komi: float = 6.0
+    early_end_pass_alive: bool = True
     
     def legal_moves(self, state: "GameState") -> List[int]:
         """Return all legal moves (flattened 0..N*N plus PASS)."""
@@ -109,6 +111,8 @@ class Rules:
     def is_terminal(self, state: "GameState") -> bool:
         if self.end_on_two_passes and state.passes_count >= 2:
             return True
+        if self.early_end_pass_alive and all_points_are_pass_alive_or_territory(state.board):
+            return True
         return False
     
     def territory_score(self, board: np.ndarray) -> int:
@@ -127,5 +131,4 @@ class Rules:
     def final_score(self, state: "GameState") -> float:
         """Black-positive score, with komi applied (White gets komi)."""
         assert self.is_terminal(state), "Called final_score on non-terminal state"
-        raw_score = self.territory_score(state.board)
-        return float(raw_score) - self.komi   # subtract komi -> equivalent to giving White +komi
+        return float(self.territory_score(state.board)) - self.komi   # subtract komi -> equivalent to giving White +komi

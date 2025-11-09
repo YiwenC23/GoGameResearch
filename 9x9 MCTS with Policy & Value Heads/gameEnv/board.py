@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import numpy as np
-from typing import Iterable, Set, Tuple, List
+from typing import Iterable, Set, Tuple, List, Dict
 
 
 BLACK, WHITE, EMPTY = 1, -1, 0   # Stone Colors
 PASS_STR = "PASS"
 COLS = "ABCDEFGHJ"
+Coord = Tuple[int, int]  # (x, y) board coordinates
 COL2IDX = {col:i for i,col in enumerate(COLS)}
 ORTHO_DIRS: Tuple[Tuple[int, int], ...] = ((-1, 0), (1, 0), (0, -1), (0, 1))   # Directions (4-neighborhood: up, down, left, right)
 
@@ -225,3 +226,109 @@ def empty_regions_with_borders(board: np.ndarray) -> List[Tuple[Set[Tuple[int,in
             regions_with_borders.append((region, borders))
     
     return regions_with_borders
+
+def _all_chains_and_liberties(board: np.ndarray, color: int) -> List[Tuple[Set[Coord], Set[Coord]]]:
+    """All chains of `color` with their liberties."""
+    n = board_size(board)
+    seen: Set[Coord] = set()
+    out: List[Tuple[Set[Coord], Set[Coord]]] = []
+    for x in range(n):
+        for y in range(n):
+            if int(board[x, y]) == color and (x, y) not in seen:
+                stones, libs = flood_group(board, x, y)
+                out.append((stones, libs))
+                seen |= stones
+    return out
+
+def _chains_index(chains: List[Tuple[Set[Coord], Set[Coord]]]) -> Dict[Coord, frozenset]:
+    """Map each stone coordinate -> the chain (as frozenset)."""
+    idx: Dict[Coord, frozenset] = {}
+    for stones, _ in chains:
+        f = frozenset(stones)
+        for s in stones:
+            idx[s] = f
+    return idx
+
+def _region_adjacent_chains(board: np.ndarray, region: Set[Coord], color: int,
+                            chain_index: Dict[Coord, frozenset]) -> Set[frozenset]:
+    """For an empty region, return the set of adjacent same-color chains."""
+    n = board_size(board)
+    adj: Set[frozenset] = set()
+    for x, y in region:
+        for nx, ny in neighbors(x, y, n):
+            if int(board[nx, ny]) == color:
+                adj.add(chain_index[(nx, ny)])
+    return adj
+
+def benson_pass_alive(board: np.ndarray, color: int) -> Tuple[Set[Coord], List[Set[Coord]]]:
+    """
+    Benson's algorithm for pass-alive groups and pass-alive territory for `color`.
+    Returns (pass_alive_stones, pass_alive_territory_regions).
+    """
+    # Chains and liberties
+    chains = _all_chains_and_liberties(board, color)
+    chain_index = _chains_index(chains)
+    X: Set[frozenset] = set(frozenset(stones) for stones, _ in chains)
+    chain_libs = {frozenset(stones): set(libs) for stones, libs in chains}
+
+    # Empty regions bordered only by `color`
+    regions = [region for region, borders in empty_regions_with_borders(board) if borders == {color}]
+    R: Set[frozenset] = set(frozenset(region) for region in regions)
+
+    changed = True
+    while changed:
+        changed = False
+        # (1) Remove chains with < 2 vital regions
+        to_remove = []
+        for C in list(X):
+            vital = 0
+            libs = chain_libs[C]
+            for Rgn in R:
+                if set(Rgn).issubset(libs):
+                    vital += 1
+                    if vital >= 2:
+                        break
+            if vital < 2:
+                to_remove.append(C)
+        if to_remove:
+            for C in to_remove:
+                X.remove(C)
+            changed = True
+
+        # (2) Remove regions adjacent to any same-color chain not in X
+        to_remove_regions = []
+        for Rgn in list(R):
+            adj = _region_adjacent_chains(board, set(Rgn), color, chain_index)
+            if any(C not in X for C in adj):
+                to_remove_regions.append(Rgn)
+        if to_remove_regions:
+            for Rgn in to_remove_regions:
+                R.remove(Rgn)
+            changed = True
+
+    # Collect results
+    pass_alive_stones: Set[Coord] = set().union(*X) if X else set()
+    pass_alive_territory_regions: List[Set[Coord]] = [set(r) for r in R]
+    return pass_alive_stones, pass_alive_territory_regions
+
+def all_points_are_pass_alive_or_territory(board: np.ndarray) -> bool:
+    """
+    KataGo-style early-end test: return True iff every point is either
+    a stone in a pass-alive chain, or an empty point in pass-alive territory (of exactly one color).
+    """
+    b_alive, b_terr_regs = benson_pass_alive(board, BLACK)
+    w_alive, w_terr_regs = benson_pass_alive(board, WHITE)
+    b_terr = set().union(*b_terr_regs) if b_terr_regs else set()
+    w_terr = set().union(*w_terr_regs) if w_terr_regs else set()
+
+    n = board_size(board)
+    for x in range(n):
+        for y in range(n):
+            v = int(board[x, y])
+            if v == BLACK and (x, y) not in b_alive:
+                return False
+            if v == WHITE and (x, y) not in w_alive:
+                return False
+            if v == EMPTY and (x, y) not in b_terr and (x, y) not in w_terr:
+                return False
+    return True

@@ -50,16 +50,14 @@ class GameState:
     def final_score(self, rules: "Rules") -> float:
         return rules.final_score(self)
     
-    # NN encoder (example: 3 planes: player stones, opponent stones, to-play)
+    # NN encoder
     def encode_planes(self) -> np.ndarray:
         """
-        Return CxNxN float32 tensor suitable for a tiny ResNet input.
+        Return tensor of shape [C, N, N] suitable for a tiny ResNet input.
         Planes:
-            0: current player's stones (1.0 where my stones, 0 else)
-            1: opponent stones
-            2: all-ones plane (or could be to-play scalar fed elsewhere)
+            plane 0: stones of player-to-move
+            plane 1: stones of opponent
         """
         player_plane = (self.board == self.to_play).astype(np.float32)
         opponent_plane = (self.board == -self.to_play).astype(np.float32)
-        ones_plane = np.ones_like(player_plane, dtype=np.float32)
-        return np.stack([player_plane, opponent_plane, ones_plane], axis=0)
+        return np.stack([player_plane, opponent_plane], axis=0)
