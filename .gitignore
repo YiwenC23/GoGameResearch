@@ -2,7 +2,11 @@
 # Files
 .DS_Store
 test.ipynb
+pytest.ini
 
 # Directories
-__pycache__
+data
+tests
 .vscode
+.pytest_cache
+__pycache__
