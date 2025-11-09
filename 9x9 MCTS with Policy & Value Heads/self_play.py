@@ -13,8 +13,10 @@ from algorithms.MCTS import MCTS
 from algorithms.resNet import ResNet, ResNetConfig
 from gameEnv.rules import Rules
 from gameEnv.gameState import GameState
+from gameEnv.board import all_points_are_pass_alive_or_territory
 
 from configs import self_play_config
+
 
 
 _DEVICE_STR: str | None = None
@@ -89,14 +91,14 @@ def one_self_play_game(
     moves_played: List[int] = []
     
     move_idx = 0
-    while not state.is_terminal(rules):
+    while not rules.is_terminal(state):
         # Temperature schedule
         if move_idx < temperature_moves:
             temp = temp_init
         else:
             temp = temp_after
         
-        root = mcts.search(state, add_root_noise=True)
+        root = mcts.search(state, add_root_noise=(temp > 0.0))
         
         # Policy target from visit counts
         pi = MCTS.prob_from_root_visits(root, board_size, temp)
@@ -113,12 +115,6 @@ def one_self_play_game(
         # Apply move to game state
         state = state.apply(rules, move)
         move_idx += 1
-        
-        # Prepare the next root (tree reuse) now for the next iteration
-        if not state.is_terminal(rules) and hasattr(mcts, "re_root"):
-            root = mcts.re_root(root, move, add_root_noise=False)  # noise added at loop top
-        else:
-            root = None  # will be rebuilt in next loop iteration
     
     # Game over: compute file result
     final_score = rules.final_score(state)  # positive: Black win; negative: White win
@@ -128,6 +124,12 @@ def one_self_play_game(
         winner = -1  # White
     else:
         winner = 0  # Draw
+    
+    if state.passes_count >= 2:
+        terminal_reason = "two_passes"
+    else:
+        # re-check pass-alive condition for tagging
+        terminal_reason = "pass_alive" if all_points_are_pass_alive_or_territory(state.board) else "other"
     
     # Build value targets from the perspective of each player at each move
     z_list: List[float] = []
@@ -147,9 +149,12 @@ def one_self_play_game(
         "z": np.array(z_list, dtype=np.float32),                  # [T]
         "meta": {
             "board_size": int(board_size),
-            "final_score": float(final_score),
-            "winner": int(winner),
+            "final_score": float(final_score),                                          # Black-positive score, including komi
+            "score_by_color": {"B": float(final_score), "W": float(-final_score)},
+            "winner": int(winner),                                                      # 1=Black, -1=White, 0=Draw
             "komi": float(rules.komi),
+            "terminal_reason": terminal_reason,
+            "early_end_pass_alive": bool(rules.early_end_pass_alive),
             "temperature_moves": int(temperature_moves),
             "moves": moves_played,
         }
@@ -195,6 +200,8 @@ def self_play_worker(game_idx: int) -> tuple[int, Path, Dict[str, Any], int]:
     rules.komi = self_play_config.KOMI
     rules.allow_suicide = self_play_config.ALLOW_SUICIDE
     rules.ko = self_play_config.KO
+    rules.early_end_pass_alive = self_play_config.EARLY_END_PASS_ALIVE
+    rules.end_on_two_passes = self_play_config.END_ON_TWO_PASSES
     
     cfg = ResNetConfig(board_size=self_play_config.BOARD_SIZE, in_channels=self_play_config.IN_CHANNELS)
     model = ResNet(cfg)
@@ -212,7 +219,9 @@ def self_play_worker(game_idx: int) -> tuple[int, Path, Dict[str, Any], int]:
     )
     output_path = save_game_npz(sample, self_play_config.OUTPUT_DIR)
     length = int(sample["z"].shape[0])
-    return game_idx, output_path, sample, length
+    players_score = sample["meta"]["score_by_color"]
+    terminal_reason = sample["meta"]["terminal_reason"]
+    return game_idx, output_path, sample, length, players_score, terminal_reason
 
 def main():
     np.random.seed(self_play_config.SEED)
@@ -237,13 +246,16 @@ def main():
             initializer=_pool_initializer,
             initargs=(str(device), model_state_dict),
         ) as pool:
-            for game_idx, output_path, sample, length in pool.imap_unordered(self_play_worker, work):
+            for game_idx, output_path, sample, length, palyers_score, terminal_reason in pool.imap_unordered(self_play_worker, work):
                 winner_str = "BLACK" if sample["meta"]["winner"] == 1 else "WHITE" if sample["meta"]["winner"] == -1 else "DRAW"
                 score = sample["meta"]["final_score"]
+                b_socre = palyers_score['B']
+                w_score = palyers_score['W']
                 print(
                     f"[Game {game_idx+1}/{self_play_config.NUM_SELF_PLAY_GAMES}] "
                     f"length={length} moves | score={score:.1f} | "
-                    f"winner={winner_str} | saved -> {output_path}"
+                    f"black_score={b_socre:.1f}, white_score={w_score:.1f} | "
+                    f"winner={winner_str} | terminal_reason={terminal_reason}"
                 )
     else:
         # Run self-play games sequentially
