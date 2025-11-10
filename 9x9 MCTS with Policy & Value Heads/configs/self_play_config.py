@@ -4,8 +4,8 @@ import pathlib
 BASEDIR = pathlib.Path(__file__).parent.parent.resolve()
 
 
-NUM_SELF_PLAY_GAMES = 5
-SEED = 25
+NUM_SELF_PLAY_GAMES = 100
+SEED = None
 BOARD_SIZE = 9
 KOMI = 6.0
 ALLOW_SUICIDE = False
@@ -16,7 +16,7 @@ MCTS_SIMS = 800
 C_PUCT = 1.4
 DIRICHLET_ALPHA = 0.15
 DIRICHLET_EPS = 0.25
-TEMPERATURE_MOVES = 20
+TEMPERATURE_MOVES = 10
 PARALLEL_SELF_PLAY = True
 NUM_WORKERS = 12
 OUTPUT_DIR = BASEDIR/"data/self_play_data"

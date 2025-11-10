@@ -150,11 +150,9 @@ def one_self_play_game(
         "meta": {
             "board_size": int(board_size),
             "final_score": float(final_score),                                          # Black-positive score, including komi
-            "score_by_color": {"B": float(final_score), "W": float(-final_score)},
             "winner": int(winner),                                                      # 1=Black, -1=White, 0=Draw
             "komi": float(rules.komi),
             "terminal_reason": terminal_reason,
-            "early_end_pass_alive": bool(rules.early_end_pass_alive),
             "temperature_moves": int(temperature_moves),
             "moves": moves_played,
         }
@@ -192,8 +190,9 @@ def pick_device():
 def self_play_worker(game_idx: int) -> tuple[int, Path, Dict[str, Any], int]:
     if _DEVICE_STR is None or _MODEL_STATE_DICT is None:
         raise RuntimeError("Pool initializer not run before self_play_worker.")
-    np.random.seed(self_play_config.SEED + game_idx)
-    torch.manual_seed(self_play_config.SEED + game_idx)
+    if self_play_config.SEED is not None:
+        np.random.seed(self_play_config.SEED + game_idx)
+        torch.manual_seed(self_play_config.SEED + game_idx)
     
     device = torch.device(_DEVICE_STR)
     rules = Rules()
@@ -219,13 +218,12 @@ def self_play_worker(game_idx: int) -> tuple[int, Path, Dict[str, Any], int]:
     )
     output_path = save_game_npz(sample, self_play_config.OUTPUT_DIR)
     length = int(sample["z"].shape[0])
-    players_score = sample["meta"]["score_by_color"]
-    terminal_reason = sample["meta"]["terminal_reason"]
-    return game_idx, output_path, sample, length, players_score, terminal_reason
+    return game_idx, output_path, sample, length
 
 def main():
-    np.random.seed(self_play_config.SEED)
-    torch.manual_seed(self_play_config.SEED)
+    if self_play_config.SEED is not None:
+        np.random.seed(self_play_config.SEED)
+        torch.manual_seed(self_play_config.SEED)
     
     parallel = self_play_config.PARALLEL_SELF_PLAY
     
@@ -246,16 +244,14 @@ def main():
             initializer=_pool_initializer,
             initargs=(str(device), model_state_dict),
         ) as pool:
-            for game_idx, output_path, sample, length, palyers_score, terminal_reason in pool.imap_unordered(self_play_worker, work):
+            for game_idx, output_path, sample, length in pool.imap_unordered(self_play_worker, work):
                 winner_str = "BLACK" if sample["meta"]["winner"] == 1 else "WHITE" if sample["meta"]["winner"] == -1 else "DRAW"
                 score = sample["meta"]["final_score"]
-                b_socre = palyers_score['B']
-                w_score = palyers_score['W']
+                terminal_reason = sample["meta"]["terminal_reason"]
                 print(
                     f"[Game {game_idx+1}/{self_play_config.NUM_SELF_PLAY_GAMES}] "
                     f"length={length} moves | score={score:.1f} | "
-                    f"black_score={b_socre:.1f}, white_score={w_score:.1f} | "
-                    f"winner={winner_str} | terminal_reason={terminal_reason}"
+                    f"winner={winner_str} | terminal_reason={terminal_reason} | saved -> {output_path}"
                 )
     else:
         # Run self-play games sequentially
@@ -263,8 +259,16 @@ def main():
         _pool_initializer(str(device), model_state_dict)
         for game_idx in range(self_play_config.NUM_SELF_PLAY_GAMES):
             _, output_path, sample, length = self_play_worker(game_idx)
-            winner_str = "BLACK" if sample["meta"]["winner"] == 1 else "WHITE" if sample["meta"]["winner"] == -1 else "DRAW"
-            score = sample["meta"]["final_score"]
+            
+            if sample["meta"]["winner"] == 1:
+                winner_str = "BLACK"
+                score = sample["meta"]["final_score"]
+            elif sample["meta"]["winner"] == -1:
+                winner_str = "WHITE"
+                score = -sample["meta"]["final_score"]
+            else:
+                winner_str = "DRAW"
+                score = sample["meta"]["final_score"]
             print(
                 f"[Game {game_idx+1}/{self_play_config.NUM_SELF_PLAY_GAMES}] "
                 f"length={length} moves | score={score:.1f} | "

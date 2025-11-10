@@ -70,7 +70,8 @@ class Rules:
                         continue
             
             legal.append(index)
-        legal.append(pass_idx)   # Pass is always legal
+        if state.move_number >= 81:
+            legal.append(pass_idx)
         
         return legal
     
