@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, replace, field
 from typing import Optional, List, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -10,6 +10,12 @@ if TYPE_CHECKING:
 
 from gameEnv.board import BLACK
 
+
+def _hash_board(board: np.ndarray) -> int:
+    """
+    Fast positional hash for positional-superko checks.
+    """
+    return hash(board.tobytes())
 
 @dataclass(frozen=True)
 class GameState:
@@ -26,16 +32,18 @@ class GameState:
     prev_board: Optional[np.ndarray]
     passes_count: int
     move_number: int
+    pos_hashes: frozenset[int] = field(default_factory=frozenset) # positional hashes for superko checking
     
     # Constructors
     @staticmethod
     def new(size: int = 9, to_play: int = BLACK) -> "GameState":
         board = np.zeros((size, size), dtype=np.int8)
-        return GameState(board=board, to_play=to_play, prev_board=None, passes_count=0, move_number=0)
+        return GameState(board=board, to_play=to_play, prev_board=None, passes_count=0, move_number=0, pos_hashes=frozenset({_hash_board(board)}))
     
     # Replace helper (since frozen=True)
     def _replace(self, **kwargs) -> "GameState":
-        return replace(self, **kwargs)
+        data = dict(self.__dict__); data.update(kwargs)
+        return type(self)(**data)
     
     # Thin facade delegating to Rules
     def legal_moves(self, rules: "Rules") -> List[int]:

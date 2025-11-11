@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Tuple, Optional
 
 from gameEnv.rules import Rules
-from gameEnv.board import BLACK, WHITE
+from gameEnv.board import BLACK, WHITE, pass_move
 from gameEnv.gameState import GameState
 
 
@@ -62,8 +62,8 @@ class MCTSNode:
 
 class MCTS:
     def __init__(
-        self, rules: Rules, evaluator: PolicyValueEvaluator, sims: int=800,
-        c_puct: float=1.4, dirichlet_alpha: float=0.15, dirichlet_epsilon: float=0.25
+        self, rules: Rules, evaluator: PolicyValueEvaluator, sims: int=800, c_puct: float=1.4,
+        dirichlet_alpha: float=0.15, dirichlet_epsilon: float=0.25, force_pass_min_visits: int=8,
     ):
         self.rules = rules
         self.eval = evaluator
@@ -71,6 +71,7 @@ class MCTS:
         self.c_puct = c_puct
         self.dir_alpha = dirichlet_alpha
         self.dir_epsilon = dirichlet_epsilon
+        self.force_pass_min_visits = force_pass_min_visits
     
     def _terminal_value(self, state: GameState) -> float:
         score = self.rules.final_score(state)  # Black: positive; White: negative
@@ -90,9 +91,16 @@ class MCTS:
         if not root.children:
             return
         
+        pass_idx = pass_move(root.state.board)
         legal_moves = list(root.children.keys())
-        noise = np.random.dirichlet([self.dir_alpha] * len(legal_moves))
-        for i, move in enumerate(legal_moves):
+        nonpass_moves = [move for move in legal_moves if move != pass_idx]
+        
+        if not nonpass_moves:
+            # nothing to nosise (either only PASS child, or no children)
+            return
+
+        noise = np.random.dirichlet([self.dir_alpha] * len(nonpass_moves))
+        for i, move in enumerate(nonpass_moves):
             child = root.children[move]
             child.prior = (1 - self.dir_epsilon) * child.prior + self.dir_epsilon * float(noise[i])
         
@@ -100,8 +108,9 @@ class MCTS:
         if renormalize:
             total_prior = sum(child.prior for child in root.children.values())
             if total_prior > 0:
+                inv_total_prior = 1.0 / total_prior
                 for child in root.children.values():
-                    child.prior /= total_prior
+                    child.prior *= inv_total_prior
     
     def _backpropagate(self, path: List[MCTSNode], leaf_value: float) -> None:
         value = leaf_value
@@ -110,35 +119,94 @@ class MCTS:
             node.value_sum += value
             value = -value
     
+    def _simulate_once(self, root: MCTSNode, forced_first_move: Optional[int] = None) -> None:
+        """
+        Run one simulation from `root`.
+        If `forced_first_move` is set and exists as a child of the root, we descend into it first.
+        """
+        node = root
+        path = [node]
+        
+        # Optionally force the very first child (used by the pass-vs-play hardening)
+        if forced_first_move is not None and forced_first_move in node.children:
+            node = node.children[forced_first_move]
+            path.append(node)
+        
+        # Selection
+        while node.children and not node.is_terminal(self.rules):
+            node = node.best_child(self.c_puct)
+            path.append(node)
+        
+        # Evaluation / Expansion
+        if node.is_terminal(self.rules):
+            leaf_value = self._terminal_value(node.state)
+        else:
+            priors, value = self.eval(node.state, self.rules)
+            node.expand(self.rules, priors)
+            leaf_value = value
+        
+        # Backup
+        self._backpropagate(path, leaf_value)
+    
+    def _force_explore_pass_vs_play(self, root: MCTSNode) -> int:
+        """
+        If a PASS by the current root player would immediately end the game (two passes),
+        ensure both PASS and a strong non-PASS obtain at least `force_pass_min_visits` visits
+        before move selection. Returns the number of simulations consumed.
+        """
+        if not root.children or not self.rules.end_on_two_passes:
+            return 0
+        
+        pass_idx = pass_move(root.state.board)
+        pass_child = root.children.get(pass_idx)
+        if pass_child is None:
+            return 0  # no PASS available at this node (rules may gate it)
+        
+        # Two-pass would end the game if there was exactly one previous pass.
+        would_end = (root.state.passes_count == 1)
+        if not would_end:
+            return 0
+        
+        # Pick a strong non-PASS to compare against (by prior is fine at root).
+        nonpass_moves = [m for m in root.children.keys() if m != pass_idx]
+        if not nonpass_moves:
+            return 0
+        
+        best_nonpass = max(nonpass_moves, key=lambda m: root.children[m].prior)
+        spent = 0
+        
+        # Run targeted simulations so that both pass and non-pass have some statistics.
+        # We alternate to avoid long streaks exclusively to one child.
+        targets = [pass_idx, best_nonpass]
+        while any(root.children[t].visit_count < self.force_pass_min_visits for t in targets):
+            for t in targets:
+                if root.children[t].visit_count < self.force_pass_min_visits:
+                    self._simulate_once(root, forced_first_move=t)
+                    spent += 1
+                    if spent >= self.sims:  # don't exceed budget defensively
+                        return spent
+        return spent
+    
     def search(self, root_state: GameState, add_root_noise: bool=True) -> MCTSNode:
         if root_state.is_terminal(self.rules):
             return MCTSNode(state=root_state)
         
+        # Root expension
         root = MCTSNode(state=root_state)
         priors, value = self.eval(root_state, self.rules)
         root.expand(self.rules, priors)
-        if add_root_noise:
-            self._add_dirichlet_noise(root)
         
-        for _ in range(self.sims):
-            node = root
-            path = [node]
-            
-            # Selection
-            while node.children and not node.is_terminal(self.rules):
-                node = node.best_child(self.c_puct)
-                path.append(node)
-            
-            # Evaluation
-            if node.is_terminal(self.rules):
-                leaf_value = self._terminal_value(node.state)
-            else:
-                priors, value = self.eval(node.state, self.rules)
-                node.expand(self.rules, priors)
-                leaf_value = value
-            
-            # Backpropagation
-            self._backpropagate(path, leaf_value)
+        # Root noise (exclude PASS)
+        if add_root_noise:
+            self._add_dirichlet_noise(root, renormalize=True)
+        
+        # If Pass would end the game, force both PASS and a good non-PASS to get visits
+        sims_spent = self._force_explore_pass_vs_play(root)
+        
+        # Main simulations
+        sims_remian = max(0, self.sims - sims_spent)
+        for _ in range(sims_remian):
+            self._simulate_once(root)
         
         return root
     
@@ -191,7 +259,14 @@ class MCTS:
         probs = scaled_counts / scaled_counts.sum()
         return int(np.random.choice(moves, p=probs))
     
-    def re_root(self, old_root: MCTSNode, move: int, *, add_root_noise: bool=False, renormalize_priors: bool=True) -> MCTSNode:
+    def re_root(
+        self,
+        old_root: MCTSNode,
+        move: int,
+        *,
+        add_root_noise: bool = False,
+        renormalize_priors: bool = True,
+    ) -> MCTSNode:
         """
         Promote the played move's child to be the new root (AlphaZero-style tree reuse).
         Keeps the child's subtree statistics (N/W/Q) intact to save work next turn.
@@ -202,29 +277,21 @@ class MCTS:
         # Case 1: we already searched this move — reuse subtree & stats
         child = old_root.children.get(move)
         if child is not None:
-            child.parent = None           # detach from old root
-            # drop siblings to free memory immediately (GC would get them anyway)
+            child.parent = None
             old_root.children.clear()
             
-            if add_root_noise and hasattr(self, "_add_dirichlet_noise"):
-                # allow for an upgraded version that can renormalize if desired
-                try:
-                    self._add_dirichlet_noise(child, renormalize=renormalize_priors)  # if you add that param
-                except TypeError:
-                    self._add_dirichlet_noise(child)  # backwards-compatible
+            if add_root_noise:
+                # Use our PASS-excluding noise
+                self._add_dirichlet_noise(child, renormalize=renormalize_priors)
             return child
         
-        # Case 2: we never explored this move — build a new root the straightforward way
+        # Case 2: unexplored move — build a new root straightforwardly
         next_state = old_root.state.apply(self.rules, move)
         new_root = MCTSNode(state=next_state)
         
-        # If you want noise on a brand-new root, ensure priors exist first
-        if add_root_noise and hasattr(self, "eval") and hasattr(new_root, "expand"):
+        if add_root_noise:
             priors, _ = self.eval(new_root.state, self.rules)
             new_root.expand(self.rules, priors)
-            if hasattr(self, "_add_dirichlet_noise"):
-                try:
-                    self._add_dirichlet_noise(new_root, renormalize=renormalize_priors)
-                except TypeError:
-                    self._add_dirichlet_noise(new_root)
+            self._add_dirichlet_noise(new_root, renormalize=renormalize_priors)
+        
         return new_root
