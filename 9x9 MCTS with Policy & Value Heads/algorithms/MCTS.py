@@ -74,7 +74,7 @@ class MCTS:
         self.force_pass_min_visits = force_pass_min_visits
     
     def _terminal_value(self, state: GameState) -> float:
-        score = self.rules.final_score(state)  # Black: positive; White: negative
+        _, _, score = self.rules.final_scores(state)  # Black: positive; White: negative
         if score > 0:
             winner = BLACK
         elif score < 0:

@@ -260,14 +260,14 @@ def main():
                 else:
                     winner_str = "DRAW"
                     score = sample["meta"]["final_score"]
-                terminal_reason = sample["meta"]["terminal_reason"]
                 black_score = sample["meta"]["black_score"]
                 white_score = sample["meta"]["white_score"]
+                terminal_reason = sample["meta"]["terminal_reason"]
                 print(
                     f"[Game {game_idx+1}/{self_play_config.NUM_SELF_PLAY_GAMES}] "
                     f"length={length} moves | score={score:.1f} | "
-                    f"winner={winner_str} | black_score={black_score} |"
-                    f"white_score={white_score} (komi={self_play_config.KOMI}) | "
+                    f"winner={winner_str} | black_score={black_score:.1f} |"
+                    f"white_score={white_score:.1f} (komi={self_play_config.KOMI}) | "
                     f"terminal_reason={terminal_reason} | saved -> {output_path}"
                 )
     else:
@@ -286,11 +286,15 @@ def main():
             else:
                 winner_str = "DRAW"
                 score = sample["meta"]["final_score"]
+            black_score = sample["meta"]["black_score"]
+            white_score = sample["meta"]["white_score"]
             terminal_reason = sample["meta"]["terminal_reason"]
             print(
                 f"[Game {game_idx+1}/{self_play_config.NUM_SELF_PLAY_GAMES}] "
                 f"length={length} moves | score={score:.1f} | "
-                f"winner={winner_str} | terminal_reason={terminal_reason} | saved -> {output_path}"
+                f"winner={winner_str} | black_score={black_score:.1f} |"
+                f"white_score={white_score:.1f} (komi={self_play_config.KOMI}) | "
+                f"terminal_reason={terminal_reason} | saved -> {output_path}"
             )
     
     print("Self-play completed.")

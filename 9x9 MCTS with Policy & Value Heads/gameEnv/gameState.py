@@ -55,8 +55,8 @@ class GameState:
     def is_terminal(self, rules: "Rules") -> bool:
         return rules.is_terminal(self)
     
-    def final_score(self, rules: "Rules") -> float:
-        return rules.final_score(self)
+    def final_scores(self, rules: "Rules") -> tuple[float, float, float]:
+        return rules.final_scores(self)
     
     # NN encoder
     def encode_planes(self) -> np.ndarray:
