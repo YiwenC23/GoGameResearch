@@ -18,7 +18,7 @@ from algorithms.MCTS import MCTS
 from algorithms.resNet import ResNet, ResNetConfig
 from gameEnv.rules import Rules
 from gameEnv.gameState import GameState
-from gameEnv.board import all_points_are_pass_alive_or_territory, pass_move
+from gameEnv.board import all_points_are_pass_alive_or_territory
 
 from configs.self_play_config import SelfPlayConfig
 
@@ -56,17 +56,6 @@ class PolicyValueEvaluator:
         
         # mask logits to only legal moves, then softmax
         legal_moves = state.legal_moves(rules)  # includes PASS per Rules
-        
-        # Pass Gating: Gate PASS for early moves if configured, but only when there is at least one non-PASS legal move available
-        pass_gating = sp_cfg.pass_gating
-        pass_gating_moves = sp_cfg.pass_gating_moves
-        
-        if pass_gating and state.move_number < pass_gating_moves:
-            pass_idx = pass_move(state.board)
-            nonpass_moves = [mv for mv in legal_moves if mv != pass_idx]
-            if nonpass_moves:
-                legal_moves = nonpass_moves
-        
         if not legal_moves:
             raise RuntimeError("No legal moves available in PolicyValueEvaluator.")
         
@@ -279,7 +268,7 @@ def main():
                 print(
                     f"[Game {game_idx+1}/{sp_cfg.num_games}] "
                     f"length={length} moves | score={score:.1f} | "
-                    f"winner={winner_str} | black_score={black_score:.1f} |"
+                    f"winner={winner_str} | black_score={black_score:.1f} | "
                     f"white_score={white_score:.1f} (komi={sp_cfg.komi}) | "
                     f"terminal_reason={terminal_reason} | saved -> {output_path}"
                 )
@@ -305,7 +294,7 @@ def main():
             print(
                 f"[Game {game_idx+1}/{sp_cfg.num_games}] "
                 f"length={length} moves | score={score:.1f} | "
-                f"winner={winner_str} | black_score={black_score:.1f} |"
+                f"winner={winner_str} | black_score={black_score:.1f} | "
                 f"white_score={white_score:.1f} (komi={sp_cfg.komi}) | "
                 f"terminal_reason={terminal_reason} | saved -> {output_path}"
             )

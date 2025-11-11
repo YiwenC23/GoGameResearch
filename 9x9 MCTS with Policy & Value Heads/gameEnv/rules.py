@@ -77,7 +77,8 @@ class Rules:
             
             legal.append(index)
         
-        legal.append(pass_idx)
+        if state.move_number >= 40:
+            legal.append(pass_idx)
         
         return legal
     

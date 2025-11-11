@@ -15,7 +15,7 @@ class SelfPlayConfig:
     two_pass_end: bool = True
     
     # MCTS
-    sims: int = 214
+    sims: int = 300
     c_puct: float = 1.5
     root_dirichlet_alpha: float = 0.15
     root_dirichlet_eps: float = 0.25
