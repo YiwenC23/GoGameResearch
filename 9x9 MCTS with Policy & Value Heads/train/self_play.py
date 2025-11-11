@@ -1,13 +1,18 @@
 from __future__ import annotations
 
+import sys
 import json
-import uuid
 import time
+import uuid
 import torch
 import numpy as np
 import multiprocessing as mp
 from pathlib import Path
 from typing import Dict, List, Any
+
+ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from algorithms.MCTS import MCTS
 from algorithms.resNet import ResNet, ResNetConfig
@@ -16,8 +21,6 @@ from gameEnv.gameState import GameState
 from gameEnv.board import all_points_are_pass_alive_or_territory
 
 from configs import self_play_config
-
-
 
 _DEVICE_STR: str | None = None
 _MODEL_STATE_DICT: Dict[str, torch.Tensor] | None = None
