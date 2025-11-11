@@ -246,7 +246,15 @@ def main():
         ) as pool:
             for game_idx, output_path, sample, length in pool.imap_unordered(self_play_worker, work):
                 winner_str = "BLACK" if sample["meta"]["winner"] == 1 else "WHITE" if sample["meta"]["winner"] == -1 else "DRAW"
-                score = sample["meta"]["final_score"]
+                if sample["meta"]["winner"] == 1:
+                    winner_str = "BLACK"
+                    score = sample["meta"]["final_score"]
+                elif sample["meta"]["winner"] == -1:
+                    winner_str = "WHITE"
+                    score = -sample["meta"]["final_score"]
+                else:
+                    winner_str = "DRAW"
+                    score = sample["meta"]["final_score"]
                 terminal_reason = sample["meta"]["terminal_reason"]
                 print(
                     f"[Game {game_idx+1}/{self_play_config.NUM_SELF_PLAY_GAMES}] "
@@ -269,10 +277,11 @@ def main():
             else:
                 winner_str = "DRAW"
                 score = sample["meta"]["final_score"]
+            terminal_reason = sample["meta"]["terminal_reason"]
             print(
                 f"[Game {game_idx+1}/{self_play_config.NUM_SELF_PLAY_GAMES}] "
                 f"length={length} moves | score={score:.1f} | "
-                f"winner={winner_str} | saved -> {output_path}"
+                f"winner={winner_str} | terminal_reason={terminal_reason} | saved -> {output_path}"
             )
     
     print("Self-play completed.")
