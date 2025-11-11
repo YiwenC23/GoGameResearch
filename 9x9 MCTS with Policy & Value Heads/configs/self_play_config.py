@@ -4,12 +4,12 @@ import pathlib
 BASEDIR = pathlib.Path(__file__).parent.parent.resolve()
 
 
-NUM_SELF_PLAY_GAMES = 100
+NUM_SELF_PLAY_GAMES = 5
 SEED = None
 BOARD_SIZE = 9
 KOMI = 5.5
 ALLOW_SUICIDE = False
-KO = "positioinal"
+KO = "positional"
 EARLY_END_PASS_ALIVE = True
 END_ON_TWO_PASSES = True
 MCTS_SIMS = 800
