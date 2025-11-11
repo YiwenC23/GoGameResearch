@@ -77,9 +77,7 @@ class Rules:
             
             legal.append(index)
         
-        # PASS gating
-        if state.move_number >= n*n:
-            legal.append(pass_idx)
+        legal.append(pass_idx)
         
         return legal
     

@@ -18,10 +18,11 @@ from algorithms.MCTS import MCTS
 from algorithms.resNet import ResNet, ResNetConfig
 from gameEnv.rules import Rules
 from gameEnv.gameState import GameState
-from gameEnv.board import all_points_are_pass_alive_or_territory
+from gameEnv.board import all_points_are_pass_alive_or_territory, pass_move
 
-from configs import self_play_config
+from configs.self_play_config import SelfPlayConfig
 
+sp_cfg = SelfPlayConfig()
 _DEVICE_STR: str | None = None
 _MODEL_STATE_DICT: Dict[str, torch.Tensor] | None = None
 
@@ -54,9 +55,20 @@ class PolicyValueEvaluator:
         value = float(value[0, 0].item())          # scalar
         
         # mask logits to only legal moves, then softmax
-        legal_moves = state.legal_moves(rules)  # includes PASS (index N*N)
+        legal_moves = state.legal_moves(rules)  # includes PASS per Rules
+        
+        # Pass Gating: Gate PASS for early moves if configured, but only when there is at least one non-PASS legal move available
+        pass_gating = sp_cfg.pass_gating
+        pass_gating_moves = sp_cfg.pass_gating_moves
+        
+        if pass_gating and state.move_number < pass_gating_moves:
+            pass_idx = pass_move(state.board)
+            nonpass_moves = [mv for mv in legal_moves if mv != pass_idx]
+            if nonpass_moves:
+                legal_moves = nonpass_moves
+        
         if not legal_moves:
-            raise ValueError("No legal moves available in the current state.")
+            raise RuntimeError("No legal moves available in PolicyValueEvaluator.")
         
         logits = torch.full((policy.shape[0],), float("-inf"), device=self.device)  # [N*N + 1]
         logits[legal_moves] = policy[legal_moves]
@@ -195,47 +207,48 @@ def pick_device():
 def self_play_worker(game_idx: int) -> tuple[int, Path, Dict[str, Any], int]:
     if _DEVICE_STR is None or _MODEL_STATE_DICT is None:
         raise RuntimeError("Pool initializer not run before self_play_worker.")
-    if self_play_config.SEED is not None:
-        np.random.seed(self_play_config.SEED + game_idx)
-        torch.manual_seed(self_play_config.SEED + game_idx)
+    if sp_cfg.seed is not None:
+        np.random.seed(sp_cfg.seed + game_idx)
+        torch.manual_seed(sp_cfg.seed + game_idx)
     
     device = torch.device(_DEVICE_STR)
-    rules = Rules()
-    rules.komi = self_play_config.KOMI
-    rules.allow_suicide = self_play_config.ALLOW_SUICIDE
-    rules.ko = self_play_config.KO
-    rules.early_end_pass_alive = self_play_config.EARLY_END_PASS_ALIVE
-    rules.end_on_two_passes = self_play_config.END_ON_TWO_PASSES
+    rules = Rules(
+        komi=sp_cfg.komi,
+        ko=sp_cfg.ko,
+        allow_suicide=sp_cfg.allow_suicide,
+        early_end_pass_alive=sp_cfg.early_end_pass_alive,
+        end_on_two_passes=sp_cfg.two_pass_end,
+    )
     
-    cfg = ResNetConfig(board_size=self_play_config.BOARD_SIZE, in_channels=self_play_config.IN_CHANNELS)
+    cfg = ResNetConfig(board_size=sp_cfg.board_size, in_channels=sp_cfg.in_channels)
     model = ResNet(cfg)
     model.load_state_dict(_MODEL_STATE_DICT)
     evaluator = PolicyValueEvaluator(model, device)
     mcts = MCTS(
-        rules, evaluator, sims=self_play_config.MCTS_SIMS, c_puct=self_play_config.C_PUCT,
-        dirichlet_alpha=self_play_config.DIRICHLET_ALPHA, dirichlet_epsilon=self_play_config.DIRICHLET_EPS
+        rules, evaluator, sims=sp_cfg.sims, c_puct=sp_cfg.c_puct,
+        dirichlet_alpha=sp_cfg.root_dirichlet_alpha, dirichlet_epsilon=sp_cfg.root_dirichlet_eps
     )
     
-    init_state = GameState.new(size=self_play_config.BOARD_SIZE)
+    init_state = GameState.new(size=sp_cfg.board_size)
     sample = one_self_play_game(
-        mcts, state=init_state, rules=rules, board_size=self_play_config.BOARD_SIZE,
-        temperature_moves=self_play_config.TEMPERATURE_MOVES, temp_init=1.0, temp_after=0.0
+        mcts, state=init_state, rules=rules, board_size=sp_cfg.board_size,
+        temperature_moves=sp_cfg.temperature_moves, temp_init=1.0, temp_after=0.0
     )
-    output_path = save_game_npz(sample, self_play_config.OUTPUT_DIR)
+    output_path = save_game_npz(sample, sp_cfg.out_dir)
     length = int(sample["z"].shape[0])
     return game_idx, output_path, sample, length
 
 def main():
-    if self_play_config.SEED is not None:
-        np.random.seed(self_play_config.SEED)
-        torch.manual_seed(self_play_config.SEED)
+    if sp_cfg.seed is not None:
+        np.random.seed(sp_cfg.seed)
+        torch.manual_seed(sp_cfg.seed)
     
-    parallel = self_play_config.PARALLEL_SELF_PLAY
+    parallel = sp_cfg.parallel
     
     device = pick_device()
     print(f"Using device: {device}")
     
-    cfg = ResNetConfig(board_size=self_play_config.BOARD_SIZE, in_channels=self_play_config.IN_CHANNELS)
+    cfg = ResNetConfig(board_size=sp_cfg.board_size, in_channels=sp_cfg.in_channels)
     model = ResNet(cfg)
     model_state_dict = model.state_dict()
     
@@ -243,9 +256,9 @@ def main():
         # Run self-play games in parallel using multiprocess
         print("Running self-play games in parallel...")
         ctx = mp.get_context("spawn")
-        work = range(self_play_config.NUM_SELF_PLAY_GAMES)
+        work = range(sp_cfg.num_games)
         with ctx.Pool(
-            processes=self_play_config.NUM_WORKERS,
+            processes=sp_cfg.num_workers,
             initializer=_pool_initializer,
             initargs=(str(device), model_state_dict),
         ) as pool:
@@ -264,17 +277,17 @@ def main():
                 white_score = sample["meta"]["white_score"]
                 terminal_reason = sample["meta"]["terminal_reason"]
                 print(
-                    f"[Game {game_idx+1}/{self_play_config.NUM_SELF_PLAY_GAMES}] "
+                    f"[Game {game_idx+1}/{sp_cfg.num_games}] "
                     f"length={length} moves | score={score:.1f} | "
                     f"winner={winner_str} | black_score={black_score:.1f} |"
-                    f"white_score={white_score:.1f} (komi={self_play_config.KOMI}) | "
+                    f"white_score={white_score:.1f} (komi={sp_cfg.komi}) | "
                     f"terminal_reason={terminal_reason} | saved -> {output_path}"
                 )
     else:
         # Run self-play games sequentially
         print("Running self-play games sequentially...")
         _pool_initializer(str(device), model_state_dict)
-        for game_idx in range(self_play_config.NUM_SELF_PLAY_GAMES):
+        for game_idx in range(sp_cfg.num_games):
             _, output_path, sample, length = self_play_worker(game_idx)
             
             if sample["meta"]["winner"] == 1:
@@ -290,10 +303,10 @@ def main():
             white_score = sample["meta"]["white_score"]
             terminal_reason = sample["meta"]["terminal_reason"]
             print(
-                f"[Game {game_idx+1}/{self_play_config.NUM_SELF_PLAY_GAMES}] "
+                f"[Game {game_idx+1}/{sp_cfg.num_games}] "
                 f"length={length} moves | score={score:.1f} | "
                 f"winner={winner_str} | black_score={black_score:.1f} |"
-                f"white_score={white_score:.1f} (komi={self_play_config.KOMI}) | "
+                f"white_score={white_score:.1f} (komi={sp_cfg.komi}) | "
                 f"terminal_reason={terminal_reason} | saved -> {output_path}"
             )
     
