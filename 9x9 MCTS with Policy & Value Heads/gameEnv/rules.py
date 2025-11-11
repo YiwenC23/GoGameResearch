@@ -132,27 +132,24 @@ class Rules:
             return True
         return False
     
-    def area_score(self, board: np.ndarray) -> int:
+    def area_score(self, board: np.ndarray) -> tuple[int, int]:
         """
-        Area (Tromp–Taylor/Chinese) score with no komi:
+        Area (Tromp-Taylor/Chinese) score with no komi:
             +1 per black stone, -1 per white stone,
             +region_size for owner if an empty region borders ONLY that owner.
         """
-        # Stones on board (BLACK=+1, WHITE=-1 as per your encoding)
-        score = int(np.sum(board))
-        # Empty regions bordered by exactly one color
+        b_score = int(np.count_nonzero(board == BLACK))
+        w_score = int(np.count_nonzero(board == WHITE))
         for region, borders in empty_regions_with_borders(board):
-            if len(borders) == 1:
-                owner = next(iter(borders))
-                score += owner * len(region)
-        return score
+            if borders == {BLACK}:
+                b_score += len(region)
+            elif borders == {WHITE}:
+                w_score += len(region)
+        return b_score, w_score
     
-    def final_score(self, state: "GameState") -> float:
-        """Black-positive score, with komi applied (White gets komi)."""
-        assert self.is_terminal(state), "Called final_score on non-terminal state"
-        if self.scoring == "area":
-            base = self.area_score(state.board)
-        else:
-            # Fallback: use area even if someone accidentally sets an unsupported mode.
-            base = self.area_score(state.board)
-        return float(base) - self.komi
+    def final_scores(self, state: "GameState") -> tuple[float, float, float]:
+        assert self.is_terminal(state)
+        b_score, w_score = self.area_score(state.board)
+        w_score += self.komi
+        final_score = b_score - w_score
+        return float(b_score), float(w_score), float(final_score)

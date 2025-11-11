@@ -120,7 +120,7 @@ def one_self_play_game(
         move_idx += 1
     
     # Game over: compute file result
-    final_score = rules.final_score(state)  # positive: Black win; negative: White win
+    black_score, white_score, final_score = rules.final_scores(state)
     if final_score > 0:
         winner = 1  # Black
     elif final_score < 0:
@@ -154,6 +154,8 @@ def one_self_play_game(
             "board_size": int(board_size),
             "final_score": float(final_score),                                          # Black-positive score, including komi
             "winner": int(winner),                                                      # 1=Black, -1=White, 0=Draw
+            "black_score": float(black_score),
+            "white_score": float(white_score),
             "komi": float(rules.komi),
             "terminal_reason": terminal_reason,
             "temperature_moves": int(temperature_moves),
@@ -259,10 +261,14 @@ def main():
                     winner_str = "DRAW"
                     score = sample["meta"]["final_score"]
                 terminal_reason = sample["meta"]["terminal_reason"]
+                black_score = sample["meta"]["black_score"]
+                white_score = sample["meta"]["white_score"]
                 print(
                     f"[Game {game_idx+1}/{self_play_config.NUM_SELF_PLAY_GAMES}] "
                     f"length={length} moves | score={score:.1f} | "
-                    f"winner={winner_str} | terminal_reason={terminal_reason} | saved -> {output_path}"
+                    f"winner={winner_str} | black_score={black_score} |"
+                    f"white_score={white_score} (komi={self_play_config.KOMI}) | "
+                    f"terminal_reason={terminal_reason} | saved -> {output_path}"
                 )
     else:
         # Run self-play games sequentially

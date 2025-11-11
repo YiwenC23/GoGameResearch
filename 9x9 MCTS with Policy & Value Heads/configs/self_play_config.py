@@ -4,7 +4,7 @@ import pathlib
 BASEDIR = pathlib.Path(__file__).parent.parent.resolve()
 
 
-NUM_SELF_PLAY_GAMES = 5
+NUM_SELF_PLAY_GAMES = 100
 SEED = None
 BOARD_SIZE = 9
 KOMI = 5.5
