@@ -19,16 +19,14 @@ class SelfPlayConfig:
     c_puct: float = 1.5
     root_dirichlet_alpha: float = 0.15
     root_dirichlet_eps: float = 0.25
-    temperature_moves: int = 30
-    
-    # PASS gating (self-play only)
-    pass_gating: bool = True
-    pass_gating_moves: int =  40 # block PASS until this move (if non-PASS legal moves exist)
+    temperature_moves: int = 20
     
     # Parallelism & IO
-    num_workers: int = 14
+    num_workers: int = 12
     num_games: int = 1000
     parallel: bool = True
     out_dir: Path = BASEDIR / "data" / "self_play_data"
+    ckpt_path: Path = BASEDIR / "train" / "checkpoints" / "resnet-best.pt"
     
     in_channels: int = 2
+

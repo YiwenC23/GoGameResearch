@@ -226,7 +226,8 @@ class MCTS:
         # soften distribution
         with np.errstate(divide="ignore"):
             temp_inverse = 1.0 / temp
-            scaled_visits = np.power(visits, temp_inverse, where=(visits > 0))
+            scaled_visits = np.zeros_like(visits, dtype=np.float64)
+            np.power(visits, temp_inverse, out=scaled_visits, where=(visits > 0))
         if scaled_visits.sum() <= 0:
             # Degenerate: fall back to uniform over explored children
             mask = (visits > 0).astype(np.float32)
@@ -251,7 +252,8 @@ class MCTS:
         
         # sample proportional to visit counts^1/temp
         with np.errstate(divide="ignore"):
-            scaled_counts = np.power(counts, 1.0 / temp, where=(counts > 0))
+            scaled_counts = np.zeros_like(counts, dtype=np.float64)
+            np.power(counts, 1.0 / temp, out=scaled_counts, where=(counts > 0))
         if scaled_counts.sum() <= 0:
             # Degenerate: uniform over children
             return int(random.choice(moves))

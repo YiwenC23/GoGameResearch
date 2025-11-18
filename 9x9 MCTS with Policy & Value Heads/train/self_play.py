@@ -24,12 +24,26 @@ from configs.self_play_config import SelfPlayConfig
 
 sp_cfg = SelfPlayConfig()
 _DEVICE_STR: str | None = None
-_MODEL_STATE_DICT: Dict[str, torch.Tensor] | None = None
+_EVALUATOR: PolicyValueEvaluator | None = None
+_RULES: Rules | None = None
 
 def _pool_initializer(device_str: str, model_state_dict: Dict[str, torch.Tensor]) -> None:
-    global _DEVICE_STR, _MODEL_STATE_DICT
+    global _DEVICE_STR, _EVALUATOR, _RULES
+    device = torch.device(device_str)
+    
+    cfg = ResNetConfig(board_size=sp_cfg.board_size, in_channels=sp_cfg.in_channels)
+    model = ResNet(cfg)
+    model.load_state_dict(model_state_dict)
+    _EVALUATOR = PolicyValueEvaluator(model, device)
+    
+    _RULES = Rules(
+        komi=sp_cfg.komi,
+        ko=sp_cfg.ko,
+        allow_suicide=sp_cfg.allow_suicide,
+        early_end_pass_alive=sp_cfg.early_end_pass_alive,
+        end_on_two_passes=sp_cfg.two_pass_end,
+    )
     _DEVICE_STR = device_str
-    _MODEL_STATE_DICT = model_state_dict
 
 class PolicyValueEvaluator:
     """
@@ -193,29 +207,27 @@ def pick_device():
         return torch.device("mps")
     return torch.device("cpu")
 
+def load_model_state(path: Path) -> Dict[str, torch.Tensor]:
+    payload = torch.load(path, map_location="cpu")
+    state = payload.get("ema") or payload["model"]
+    return {k: v.detach().clone() for k, v in state.items()}
+
 def self_play_worker(game_idx: int) -> tuple[int, Path, Dict[str, Any], int]:
-    if _DEVICE_STR is None or _MODEL_STATE_DICT is None:
+    if _DEVICE_STR is None or _EVALUATOR is None or _RULES is None:
         raise RuntimeError("Pool initializer not run before self_play_worker.")
     if sp_cfg.seed is not None:
         np.random.seed(sp_cfg.seed + game_idx)
         torch.manual_seed(sp_cfg.seed + game_idx)
     
-    device = torch.device(_DEVICE_STR)
-    rules = Rules(
-        komi=sp_cfg.komi,
-        ko=sp_cfg.ko,
-        allow_suicide=sp_cfg.allow_suicide,
-        early_end_pass_alive=sp_cfg.early_end_pass_alive,
-        end_on_two_passes=sp_cfg.two_pass_end,
-    )
-    
-    cfg = ResNetConfig(board_size=sp_cfg.board_size, in_channels=sp_cfg.in_channels)
-    model = ResNet(cfg)
-    model.load_state_dict(_MODEL_STATE_DICT)
-    evaluator = PolicyValueEvaluator(model, device)
+    rules = _RULES
+    evaluator = _EVALUATOR
     mcts = MCTS(
-        rules, evaluator, sims=sp_cfg.sims, c_puct=sp_cfg.c_puct,
-        dirichlet_alpha=sp_cfg.root_dirichlet_alpha, dirichlet_epsilon=sp_cfg.root_dirichlet_eps
+        rules,
+        evaluator,
+        sims=sp_cfg.sims,
+        c_puct=sp_cfg.c_puct,
+        dirichlet_alpha=sp_cfg.root_dirichlet_alpha,
+        dirichlet_epsilon=sp_cfg.root_dirichlet_eps,
     )
     
     init_state = GameState.new(size=sp_cfg.board_size)
@@ -237,9 +249,10 @@ def main():
     device = pick_device()
     print(f"Using device: {device}")
     
-    cfg = ResNetConfig(board_size=sp_cfg.board_size, in_channels=sp_cfg.in_channels)
-    model = ResNet(cfg)
-    model_state_dict = model.state_dict()
+    ckpt_path = Path(sp_cfg.ckpt_path)
+    if not ckpt_path.exists():
+        raise FileNotFoundError(f"Checkpoint not found: {ckpt_path}")
+    model_state_dict = load_model_state(ckpt_path)
     
     if parallel:
         # Run self-play games in parallel using multiprocess

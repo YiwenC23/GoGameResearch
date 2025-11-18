@@ -77,8 +77,18 @@ class Rules:
             
             legal.append(index)
         
-        if state.move_number >= 40:
-            legal.append(pass_idx)
+        # if state.move_number >= 85:
+        #     legal.append(pass_idx)
+        
+        # keep your gating, but never return an empty set
+        #if state.move_number >= 85 or not legal:
+        #    legal.append(pass_idx)
+        
+        # also allow PASS if it would immediately end the game (two passes)
+        #if self.end_on_two_passes and state.passes_count == 1 and pass_idx not in legal:
+        #    legal.append(pass_idx)
+            
+        legal.append(pass_idx)
         
         return legal
     
