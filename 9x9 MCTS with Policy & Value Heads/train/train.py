@@ -133,6 +133,10 @@ def fit(
     ckpt_dir = Path(cfg.ckpt_dir)
     ckpt_dir.mkdir(parents=True, exist_ok=True)
     
+    history_path = ckpt_dir / "loss_history.csv"
+    if not history_path.exists():
+        history_path.write_text("epoch,train_policy,train_value,val_policy,val_value,val_total,seconds\n")
+    
     best_val = float("inf")
     epochs_no_improve = 0
     
@@ -191,6 +195,17 @@ def fit(
         val_total = cfg.policy_loss_weight * val_stats["val_policy_loss"] + cfg.value_loss_weight * val_stats["val_value_loss"]
         
         elapsed = time.time() - t0
+        row = (
+            f"{epoch},"
+            f"{train_stats['policy_loss']:.6f},"
+            f"{train_stats['value_loss']:.6f},"
+            f"{val_stats['val_policy_loss']:.6f},"
+            f"{val_stats['val_value_loss']:.6f},"
+            f"{val_total:.6f},"
+            f"{elapsed:.2f}\n"
+        )
+        with history_path.open("a", encoding="utf-8") as f:
+            f.write(row)
         
         # Save epoch checkpoint (raw weights + EMA)
         payload = {
