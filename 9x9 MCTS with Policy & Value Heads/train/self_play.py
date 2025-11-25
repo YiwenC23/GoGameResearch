@@ -18,7 +18,6 @@ from algorithms.MCTS import MCTS
 from algorithms.resNet import ResNet, ResNetConfig
 from gameEnv.rules import Rules
 from gameEnv.gameState import GameState
-from gameEnv.board import all_points_are_pass_alive_or_territory
 
 from configs.self_play_config import SelfPlayConfig
 
@@ -40,8 +39,9 @@ def _pool_initializer(device_str: str, model_state_dict: Dict[str, torch.Tensor]
         komi=sp_cfg.komi,
         ko=sp_cfg.ko,
         allow_suicide=sp_cfg.allow_suicide,
-        early_end_pass_alive=sp_cfg.early_end_pass_alive,
-        end_on_two_passes=sp_cfg.two_pass_end,
+        end_on_two_passes=sp_cfg.end_on_two_passes,
+        pass_limit=sp_cfg.pass_limit,
+        eye_protect=sp_cfg.eye_protect,
     )
     _DEVICE_STR = device_str
 
@@ -145,9 +145,6 @@ def one_self_play_game(
     
     if state.passes_count >= 2:
         terminal_reason = "two_passes"
-    else:
-        # re-check pass-alive condition for tagging
-        terminal_reason = "pass_alive" if all_points_are_pass_alive_or_territory(state.board) else "other"
     
     # Build value targets from the perspective of each player at each move
     z_list: List[float] = []
@@ -250,8 +247,13 @@ def main():
     print(f"Using device: {device}")
     
     ckpt_path = Path(sp_cfg.ckpt_path)
+    ckpt_path.parent.mkdir(parents=True, exist_ok=True)
     if not ckpt_path.exists():
-        raise FileNotFoundError(f"Checkpoint not found: {ckpt_path}")
+        # Generate a dummy checkpoint if none exists
+        cfg = ResNetConfig(board_size=sp_cfg.board_size, in_channels=sp_cfg.in_channels)
+        dummy_model = ResNet(cfg)
+        torch.save({"model": dummy_model.state_dict()}, ckpt_path)
+        print(f"No checkpoint found, created new random checkpoint at {ckpt_path} \n")
     model_state_dict = load_model_state(ckpt_path)
     
     if parallel:

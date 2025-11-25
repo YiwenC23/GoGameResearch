@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import numpy as np
-from typing import List
+from typing import Optional, List, Set
 from dataclasses import dataclass
 
 from gameEnv.gameState import GameState, _hash_board
@@ -13,7 +13,7 @@ from gameEnv.board import (
     own_chain_liberties_after,
     resolve_own_suicide,
     empty_regions_with_borders,
-    all_points_are_pass_alive_or_territory
+    stone_groups, loc_to_index,
 )
 
 
@@ -32,14 +32,15 @@ class Rules:
     allow_suicide: bool = False
     scoring: str = "area"
     end_on_two_passes: bool = True
-    early_end_pass_alive: bool = True
+    pass_limit: Optional[int] = None
+    eye_protect: Optional[bool] = True
     
     def legal_moves(self, state: "GameState") -> List[int]:
         """Return all legal moves (flattened 0..N*N plus PASS)."""
         board = state.board
         n = board_size(board)
         pass_idx = pass_move(board)
-        legal: List[int] = []
+        legal_mv: List[int] = []
         
         # All points
         for index in range(n*n):
@@ -73,24 +74,46 @@ class Rules:
                 if _hash_board(next_board_final) in state.pos_hashes:
                     continue
             else:
-                raise ValueError(f"Unknown ko rule: self.ko")
+                raise ValueError(f"Unknown ko rule: {self.ko}")
             
-            legal.append(index)
+            legal_mv.append(index)
         
-        # if state.move_number >= 85:
-        #     legal.append(pass_idx)
+        if self.eye_protect:
+            legal_mv = self.legal_moves_eyes_filter(state, legal_mv)
         
-        # keep your gating, but never return an empty set
-        #if state.move_number >= 85 or not legal:
-        #    legal.append(pass_idx)
+        can_pass = self.pass_limit is None or state.move_number >= self.pass_limit
+        if pass_idx not in legal_mv and (can_pass or not legal_mv):
+            legal_mv.append(pass_idx)
         
-        # also allow PASS if it would immediately end the game (two passes)
-        #if self.end_on_two_passes and state.passes_count == 1 and pass_idx not in legal:
-        #    legal.append(pass_idx)
-            
-        legal.append(pass_idx)
+        return legal_mv
+    
+    def legal_moves_eyes_filter(self, state: "GameState", legal_moves: List[int]) -> List[int]:
+        """
+        For each adjacent region of live groups, filter out moves when the region contains only one empty space (only one liberty)
         
-        return legal
+        """
+        board = state.board
+        n = board_size(board)
+        pass_idx = pass_move(board)
+        live_groups_dict = stone_groups(board, state.to_play)
+        
+        eye_locs: Set[int] = set()
+        for regions in live_groups_dict.values():
+            for region in regions:
+                # region is a list of indices, filter only when the region has only one liberty
+                if len(region) == 1:
+                    (x, y) = next(iter(region))
+                    eye_locs.add(loc_to_index(x, y, n))
+        
+        filtered_legal_moves: List[int] = []
+        for move in legal_moves:
+            if move == pass_idx:
+                filtered_legal_moves.append(move)
+                continue
+            if move not in eye_locs:
+                filtered_legal_moves.append(move)
+        
+        return filtered_legal_moves
     
     #* State Transition
     def apply_move(self, state: "GameState", move: int) -> "GameState":
@@ -136,8 +159,6 @@ class Rules:
     #* Termination & Scoring
     def is_terminal(self, state: "GameState") -> bool:
         if self.end_on_two_passes and state.passes_count >= 2:
-            return True
-        if self.early_end_pass_alive and all_points_are_pass_alive_or_territory(state.board):
             return True
         return False
     
