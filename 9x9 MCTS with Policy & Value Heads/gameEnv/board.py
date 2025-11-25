@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
-from typing import Iterable, Set, Tuple, List, Dict
+from typing import Iterable, Dict, List, Set, Tuple, FrozenSet
 
 
 BLACK, WHITE, EMPTY = 1, -1, 0   # Stone Colors
@@ -260,96 +260,54 @@ def _region_adjacent_chains(board: np.ndarray, region: Set[Coord], color: int,
                 adj.add(chain_index[(nx, ny)])
     return adj
 
-def benson_pass_alive(board: np.ndarray, color: int) -> Tuple[Set[Coord], List[Set[Coord]]]:
+def stone_groups(board: np.ndarray, color: int) -> Dict[FrozenSet[Coord], List[Set[Coord]]]:
     """
-    Benson's algorithm for pass-alive groups and pass-alive territory for `color`.
-    Returns (pass_alive_stones, pass_alive_territory_regions).
-    """
-    # Chains and liberties
+    Find all groups of `color` that has at least one adjacent region.
+    Return:
+        dict: {chain_frozenset: [list of region sets]}
+    """    
+    # All chains and liberties of the color
     chains = _all_chains_and_liberties(board, color)
-    chain_index = _chains_index(chains)
-    X: Set[frozenset] = set(frozenset(stones) for stones, _ in chains)
-    chain_libs = {frozenset(stones): set(libs) for stones, libs in chains}
     
-    # Empty regions bordered only by `color`
-    regions = [region for region, borders in empty_regions_with_borders(board) if borders == {color}]
-    R: Set[frozenset] = set(frozenset(region) for region in regions)
+    # Index stones -> chain
+    chain_idx = _chains_index(chains)
     
-    changed = True
-    while changed:
-        changed = False
-        # (1) Remove chains with < 2 vital regions
-        to_remove = []
-        for C in list(X):
-            vital = 0
-            libs = chain_libs[C]
-            for Rgn in R:
-                if set(Rgn).issubset(libs):
-                    vital += 1
-                    if vital >= 2:
-                        break
-            if vital < 2:
-                to_remove.append(C)
-        if to_remove:
-            for C in to_remove:
-                X.remove(C)
-            changed = True
+    # Initialize the empty region list for each chain
+    chain_regions: Dict[FrozenSet[Coord], List[Set[Coord]]] = {}
+    for stones, _ in chains:
+        f = frozenset(stones)
+        chain_regions[f] = []
+    
+    # Find empty regions fully surrounded by `color` and asscociate them with adjacent chains
+    for region, borders in empty_regions_with_borders(board):
+        if not borders:
+            continue  # neutral empty region
         
-        # (2) Remove regions adjacent to any same-color chain not in X
-        to_remove_regions = []
-        for Rgn in list(R):
-            adj = _region_adjacent_chains(board, set(Rgn), color, chain_index)
-            if any(C not in X for C in adj):
-                to_remove_regions.append(Rgn)
-        if to_remove_regions:
-            for Rgn in to_remove_regions:
-                R.remove(Rgn)
-            changed = True
+        if borders != {color}:
+            continue  # bordered by opponent or both
+        
+        adj_chains = _region_adjacent_chains(board, region, color, chain_idx)
+        for chain in adj_chains:
+            chain_regions[chain].append(region)
     
-    # Collect results
-    pass_alive_stones: Set[Coord] = set().union(*X) if X else set()
-    pass_alive_territory_regions: List[Set[Coord]] = [set(r) for r in R]
-    return pass_alive_stones, pass_alive_territory_regions
+    groups_dict: Dict[FrozenSet[Coord], List[Set[Coord]]] = {}
+    for chain, region in chain_regions.items():
+            groups_dict[chain] = region
+    
+    return groups_dict
 
-def pass_alive_territory(board: np.ndarray) -> Tuple[Set[Coord], Set[Coord], Set[Coord], Set[Coord]]:
+def live_groups(board: np.ndarray, color: int) -> Dict[FrozenSet[Coord], List[Set[Coord]]]:
     """
-    Returns (aliveB, aliveW, terrB, terrW) as sets of (x,y).
-        - aliveB / aliveW: stones in pass-alive chains for each color
-        - terrB / terrW: empty points that are pass-alive territory for each color
-    """
-    b_alive, b_terr_regs = benson_pass_alive(board, BLACK)
-    w_alive, w_terr_regs = benson_pass_alive(board, WHITE)
-    terrB = set().union(*b_terr_regs) if b_terr_regs else set()
-    terrW = set().union(*w_terr_regs) if w_terr_regs else set()
-    return b_alive, w_alive, terrB, terrW
-
-def all_points_are_pass_alive_or_territory(board: np.ndarray) -> bool:
-    """
-    Return True iff every intersection is "settled":
-        - empties are in exactly one side's pass-alive territory, and
-        - stones are either pass-alive for their color OR lie inside the opponent's pass-alive territory.
-    This matches the safe early-end condition used by engines: it equals the result you'd get by continuing play to remove dead stones, but lets you end early.
-    """
-    b_alive, w_alive, terrB, terrW = pass_alive_territory(board)
+    Find all live groups of `color`.
+    A group is 'live' if it has at least two separate adjacent empty regions.
+    Return:
+        dict: {chain_frozenset: [list of region sets]}
+    """    
+    all_groups = stone_groups(board, color)
+    live_groups_dict: Dict[FrozenSet[Coord], List[Set[Coord]]] = {}
     
-    # Territories must be disjoint (any overlap means unsettled)
-    if terrB & terrW:
-        return False
+    for chain, regions in all_groups.items():
+        if len(regions) >= 2:
+            live_groups_dict[chain] = regions
     
-    n = board_size(board)
-    for x in range(n):
-        for y in range(n):
-            v = int(board[x, y])
-            if v == EMPTY:
-                # Empty must belong to exactly one color's territory
-                if (x, y) not in terrB and (x, y) not in terrW:
-                    return False
-            elif v == BLACK:
-                # Black stone is fine if it's pass-alive OR it already lies in White territory (i.e., dead)
-                if (x, y) not in b_alive and (x, y) not in terrW:
-                    return False
-            else:  # v == WHITE
-                # White stone is fine if it's pass-alive OR it already lies in Black territory (i.e., dead)
-                if (x, y) not in w_alive and (x, y) not in terrB:
-                    return False
-    return True
+    return live_groups_dict
